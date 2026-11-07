@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+.venv/
+.env
+.env.*
+!.env.example
+.codex/
+auth.json
+*.pem
+*.key
+*.log
+*.zip
+.schema-check/
+state/
+HOSTVDS.txt
+README.txt
