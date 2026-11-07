@@ -1,20 +1,26 @@
 [Unit]
-Description=Apply explicitly authorized earliest-expiring Codex reset %i
+Description=Private Telegram control and monitoring for Codex resets
 Wants=network-online.target
 After=network-online.target
 
 [Service]
-Type=oneshot
+Type=simple
 User=codex-reset
 Group=codex-reset
 WorkingDirectory=/opt/codex-reset
 Environment=HOME=/var/lib/codex-reset
 Environment=PATH=/var/lib/codex-reset/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/bin/python3 /opt/codex-reset/codex_reset.py --apply --credit-id %i
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/bin/python3 /opt/codex-reset/codex_bot.py --config /var/lib/codex-reset/.config/codex-reset-bot/config.json
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=90
 UMask=0077
-TimeoutStartSec=240
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/codex-reset
+
+[Install]
+WantedBy=multi-user.target

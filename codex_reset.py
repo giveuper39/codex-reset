@@ -25,6 +25,7 @@ class AppServer:
     def __init__(self, executable):
         self.executable = executable
         self.messages = queue.Queue()
+        self.notifications = queue.Queue()
         self.sequence = 0
 
     def __enter__(self):
@@ -36,7 +37,7 @@ class AppServer:
         threading.Thread(target=self.read, daemon=True).start()
         try:
             self.call("initialize", {"clientInfo": {
-                "name": "codex_reset_watch", "version": "1.0.0"}})
+                "name": "codex_reset", "version": "unversioned"}})
             self.send({"method": "initialized", "params": {}})
             return self
         except BaseException:
@@ -46,7 +47,11 @@ class AppServer:
     def read(self):
         try:
             for line in self.proc.stdout:
-                self.messages.put(json.loads(line))
+                message = json.loads(line)
+                if "method" in message and "id" not in message:
+                    self.notifications.put(message)
+                else:
+                    self.messages.put(message)
         except Exception as exc:
             self.messages.put(exc)
         finally:
@@ -116,6 +121,17 @@ def check_protocol(executable):
         schema = json.loads((Path(directory) / "ClientRequest.json").read_text("utf-8"))
         if not supports_exact_credit(schema):
             raise RuntimeError("This Codex version cannot target creditId; refusing any reset")
+
+
+def resolve_codex(command):
+    executable = shutil.which(command)
+    if executable and os.name == 'nt' and Path(executable).suffix.lower() in ('.cmd', '.bat', '.ps1'):
+        package = Path(executable).parent / 'node_modules/@openai/codex/node_modules/@openai'
+        candidates = list(package.glob('codex-win32-*/vendor/*/bin/codex.exe'))
+        if len(candidates) != 1:
+            raise RuntimeError('Pass the native codex.exe path; a shell wrapper cannot be used here')
+        executable = str(candidates[0])
+    return executable
 
 
 def available_credits(snapshot):
@@ -211,7 +227,7 @@ def apply_reset(client, credit_id, path, before_minutes, now=None):
             state["verified"] = True
             save(path, state)
         print("Already completed and verified:", credit_id)
-        return
+        return "alreadyCompleted"
 
     snapshot = client.call(READ)
     now = time.time() if now is None else now
@@ -246,6 +262,7 @@ def apply_reset(client, credit_id, path, before_minutes, now=None):
         state["verified"] = True
         save(path, state)
         print("Applied and verified exact credit:", credit_id)
+        return outcome
     else:
         print("No reset applied:", outcome)
         # A definitive refusal ends this attempt. A later eligible attempt gets a new key.
@@ -259,13 +276,13 @@ def main():
     parser.add_argument("--apply", action="store_true", help="Permit one named reset to be consumed")
     parser.add_argument("--credit-id", help="Explicitly authorized banked reset ID")
     parser.add_argument("--before-minutes", type=int, default=15)
-    parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/codex-reset")
+    parser.add_argument("--state-dir", type=Path, default=Path.home() / ".local/state/codex-reset-bot/redemptions")
     args = parser.parse_args()
     if args.apply and not args.credit_id:
         parser.error("--apply requires --credit-id; automatic credit selection is forbidden")
     if not 1 <= args.before_minutes <= 1440:
         parser.error("--before-minutes must be between 1 and 1440")
-    executable = shutil.which(args.codex)
+    executable = resolve_codex(args.codex)
     if not executable:
         parser.error("Codex executable not found")
     with locked(args.state_dir):

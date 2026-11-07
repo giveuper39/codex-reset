@@ -24,3 +24,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Run tests without account credentials
         run: python -m unittest -v
+      - name: Check installer syntax and help
+        run: |
+          bash -n install.sh
+          bash install.sh --help
