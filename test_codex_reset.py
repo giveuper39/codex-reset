@@ -74,17 +74,29 @@ class ResetTests(unittest.TestCase):
         client.call.assert_called_once_with(watch.READ)
         self.assertFalse(self.path.exists())
 
-    def test_waits_until_near_expiry_and_eligible(self):
-        cases = [snapshot(used=89), snapshot([credit("first", NOW + 901)]),
+    def test_waits_until_near_expiry(self):
+        cases = [snapshot([credit("first", NOW + 901)]),
                  snapshot([credit("first", NOW)]), snapshot([])]
-        stale = snapshot()
-        stale["rateLimitsByLimitId"]["codex"]["primary"]["resetsAt"] = NOW
-        cases.append(stale)
         for value in cases:
             client = Mock()
             client.call.return_value = value
             self.run_reset(client)
             client.call.assert_called_once_with(watch.READ)
+
+    def test_expiring_reset_applies_regardless_of_usage_or_missing_limit_windows(self):
+        for used in (0, 35, 89, 90, 100, None):
+            with self.subTest(used=used):
+                before = snapshot(used=used)
+                if used is None:
+                    del before['rateLimitsByLimitId']
+                client = Mock()
+                client.call.side_effect = [before, {'outcome': 'reset'},
+                                           snapshot([credit('later', NOW + 86400)], used=0)]
+                path = self.path.with_name(f'attempt-{used}.json')
+                result = watch.apply_reset(client, 'first', path, 15, NOW)
+                self.assertEqual(result, 'reset')
+                self.assertEqual(client.call.call_args_list[1].args[0], watch.CONSUME)
+                self.assertEqual(client.call.call_args_list[1].args[1]['creditId'], 'first')
 
     def test_exact_id_is_sent_and_other_credits_are_verified(self):
         client = Mock()

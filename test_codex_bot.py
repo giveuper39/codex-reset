@@ -148,6 +148,29 @@ class BotTests(unittest.TestCase):
         self.bot.monitor()
         self.backend.apply.assert_not_called()
 
+    def test_expiry_triggers_auto_even_with_full_remaining_usage(self):
+        self.backend.apply.return_value = None
+        for used in (0, 35, 100, None):
+            with self.subTest(used=used):
+                self.bot.state.update(auto_enabled=True, approved=['first'])
+                value = snapshot(used=used)
+                if used is None:
+                    del value['rateLimitsByLimitId']
+                self.backend.snapshot.return_value = (ACCOUNT, value)
+                self.backend.apply.reset_mock()
+                self.bot.monitor()
+                self.backend.apply.assert_called_once_with('first')
+
+    def test_service_refusal_is_notified_once_and_retried_for_same_id(self):
+        self.bot.state.update(auto_enabled=True, approved=['first'])
+        self.backend.snapshot.return_value = (ACCOUNT, snapshot(used=0))
+        self.backend.apply.return_value = 'nothingToReset'
+        self.bot.monitor()
+        self.bot.monitor()
+        self.assertEqual(self.backend.apply.call_count, 2)
+        self.assertEqual(self.texts().count('Codex пока не применил'), 1)
+        self.assertEqual(self.backend.apply.call_args.args, ('first',))
+
     def test_exact_success_replaces_baseline_and_removes_permission(self):
         self.bot.state.update(auto_enabled=True, approved=['first'])
         self.backend.apply.return_value = 'reset'

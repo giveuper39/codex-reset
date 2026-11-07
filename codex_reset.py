@@ -163,21 +163,6 @@ def earliest(snapshot, now):
     return min(rows, key=lambda row: (row["expiresAt"], row["id"]), default=None)
 
 
-def eligible(snapshot, now):
-    buckets = snapshot.get("rateLimitsByLimitId")
-    bucket = buckets.get("codex") if isinstance(buckets, dict) else snapshot.get("rateLimits")
-    if not isinstance(bucket, dict) or bucket.get("limitId") not in (None, "codex"):
-        return False
-    for field in ("primary", "secondary"):
-        window = bucket.get(field) or {}
-        used, resets = window.get("usedPercent"), window.get("resetsAt")
-        if (window.get("windowDurationMins") in (300, 10080)
-                and type(used) is int and 90 <= used <= 100
-                and type(resets) is int and resets > now):
-            return True
-    return False
-
-
 def save(path, data):
     temporary = path.with_suffix(".tmp")
     with temporary.open("w", encoding="utf-8") as output:
@@ -240,9 +225,6 @@ def apply_reset(client, credit_id, path, before_minutes, now=None):
     if selected["expiresAt"] - now > before_minutes * 60:
         print("Waiting: selected reset is not near expiry")
         return
-    if not eligible(snapshot, now):
-        print("Waiting: no current five-hour/weekly window has <=10% remaining")
-        return
     if not state:
         state = {"creditId": credit_id, "idempotencyKey": str(uuid.uuid4()),
                  "expiresAt": selected["expiresAt"], "outcome": "pending",
@@ -265,9 +247,10 @@ def apply_reset(client, credit_id, path, before_minutes, now=None):
         return outcome
     else:
         print("No reset applied:", outcome)
-        # A definitive refusal ends this attempt. A later eligible attempt gets a new key.
+        # A definitive refusal ends this attempt. The next attempt gets a new key.
         state["idempotencyKey"] = str(uuid.uuid4())
         save(path, state)
+        return outcome
 
 
 def main():
@@ -301,7 +284,6 @@ def main():
                               if row["expiresAt"] is not None else "never")
                     print(json.dumps({"creditId": row["id"], "expiresAtUTC": expiry,
                                       "earliest": bool(selected and selected["id"] == row["id"])}))
-                print("Eligible now:", eligible(snapshot, time.time()))
 
 
 if __name__ == "__main__":

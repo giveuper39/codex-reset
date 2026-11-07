@@ -149,7 +149,7 @@ class Bot:
         self.state = json.loads(self.path.read_text('utf-8')) if self.path.exists() else {}
         defaults = {'owner_id': config.get('owner_id'), 'offset': 0, 'auto_enabled': False,
                     'notifications': True, 'approved': [], 'outbox': [], 'baseline': None,
-                    'warned': [], 'last_error': None, 'confirmation': None}
+                    'warned': [], 'refusal_notified': [], 'last_error': None, 'confirmation': None}
         for key, value in defaults.items():
             self.state.setdefault(key, value)
         self.backend.before_minutes = config.get('before_minutes', 15)
@@ -270,7 +270,7 @@ class Bot:
         self.save()
         ids = '\n'.join('<code>' + escape(value) + '</code>' for value in approved)
         self.enqueue('<b>Включить авторесет?</b>\n\n' + ids + '\n\nТолько ближайший к сгоранию ID, '
-                     f'в последние {self.config.get("before_minutes", 15)} минут и при остатке лимита ≤10%.',
+                     f'в последние {self.config.get("before_minutes", 15)} минут. Остаток лимита не учитывается.',
                      [[{'text': 'Подтверждаю', 'callback_data': 'auto:on:' + nonce},
                        {'text': 'Отмена', 'callback_data': 'auto:off'}]])
 
@@ -414,6 +414,7 @@ class Bot:
                              + '</code>\nСгорание: ' + stamp(expiry), optional=True)
         self.state['baseline'] = current
         self.state['warned'] = [key for key in self.state['warned'] if key in current['credits']]
+        self.state['refusal_notified'] = [key for key in self.state['refusal_notified'] if key in current['credits']]
         if self.state['last_error']:
             self.enqueue('Связь с Codex восстановлена.', optional=True)
             self.state['last_error'] = None
@@ -426,7 +427,7 @@ class Bot:
             self.save()
             return
         selected = core.earliest(snapshot, now)
-        if (selected and selected['id'] in self.state['approved'] and core.eligible(snapshot, now)
+        if (selected and selected['id'] in self.state['approved']
                 and selected['expiresAt'] - now <= self.config.get('before_minutes', 15) * 60):
             outcome = self.backend.apply(selected['id'])
             if outcome in ('reset', 'alreadyRedeemed', 'alreadyCompleted'):
@@ -435,6 +436,12 @@ class Bot:
                 self.state['baseline'] = snapshot_baseline(account, after)
                 self.enqueue('✅ Сервис подтвердил применение выбранного reset\n<code>'
                              + escape(selected['id']) + '</code>\nПроверка остальных ID выполнена.')
+                self.save()
+            elif outcome in ('nothingToReset', 'noCredit') and selected['id'] not in self.state['refusal_notified']:
+                self.state['refusal_notified'].append(selected['id'])
+                self.enqueue('⚠️ Codex пока не применил выбранный reset: <code>' + outcome
+                             + '</code>\n<code>' + escape(selected['id'])
+                             + '</code>\nПовторю проверку до сгорания. Другой ID вместо него не используется.')
                 self.save()
 
     def monitor_error(self, exc):
